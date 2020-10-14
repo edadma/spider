@@ -18,7 +18,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 object Main extends App {
 
-  val site = "http://asdf.com" //"http://www.autodealerdirectory.us/" // "https://postman-echo.com/get/"
+  val site = "http://www.autodealerdirectory.us/" // "http://asdf.com" //"https://postman-echo.com/get/"
   val path = "sites"
   val base = Path.of(path)
 
@@ -30,7 +30,7 @@ object Main extends App {
 
   val actionsList =
     List(
-//      ("""[a-z]{2}_s_.*""".r, RejectAction),
+      ("""[a-z]{2}_s_.*""".r, RejectAction),
       (""".*\.html""".r, AcceptAction),
       (null, StoreAction)
     )
@@ -101,15 +101,18 @@ object Main extends App {
     }
   }
 
-  def process(page: Uri, action: Seq[Action], body: String): Unit = {
+  def process(page: Uri, actions: Seq[Action], body: String): Unit = {
     for (l <- hrefRegex.findAllMatchIn(body).map(_.group(1)))
       submit(l, page)
 
-    val path = filepath(root(page).path, base.resolve(page.authority.host.address))
+    actions foreach {
+      case StoreAction =>
+        val path = filepath(root(page).path, base.resolve(page.authority.host.address))
 
-    system.log.info(s"Writing file to path $path")
-    Files.createDirectories(path.getParent)
-    Files.writeString(path, body)
+        system.log.info(s"Writing file to path $path")
+        Files.createDirectories(path.getParent)
+        Files.writeString(path, body)
+    }
   }
 
   @scala.annotation.tailrec
