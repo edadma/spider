@@ -50,6 +50,7 @@ object Main extends App {
               case "amp"  => "&"
             }
           })
+          .replace("\"", "\"\"")
           .trim,
         " "
       )
