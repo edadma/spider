@@ -85,7 +85,7 @@ object Main extends App {
           val phone = fix(s.tab(s.find("ID").get).get)
 
           s.move(2)
-          buf ++= s""""$name", "$addr1, $addr2", $state, "$phone""""
+          buf ++= s""""$name","$addr1, $addr2",$state,"$phone""""
           buf += '\n'
           leads(buf)
       }
