@@ -3,7 +3,7 @@ package xyz.hyperreal.spider
 import java.nio.file.{Files, Path}
 import java.util.{Timer, TimerTask}
 
-import akka.actor.{Actor, ActorLogging, ActorSystem, Props, ReceiveTimeout}
+import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.Uri.{Path => Uripath}
 import akka.http.scaladsl.model._
@@ -26,14 +26,82 @@ object Main extends App {
   object AcceptAction extends Action
   object RejectAction extends Action
   object StoreAction extends Action
-  case class ProcessAction(processor: (Uri, String) => Unit)
+  case class ProcessAction(processor: (Uri, ByteString) => Unit) extends Action
 
   val actionsList =
     List(
       ("""[a-z]{2}_s_.*""".r, RejectAction),
       (""".*\.html""".r, AcceptAction),
-      (null, StoreAction)
+//      (null, StoreAction),
+      (null, ProcessAction(leads))
     )
+
+  def leads(page: Uri, body: ByteString): Unit = {
+    val path = filepath(root(page).path, base.resolve(page.authority.host.address))
+    val b = body.utf8String
+
+    val entityRegex = "&(?:([a-z]+)|#([0-9]+));" r
+    val spaceRegex = """\s+""" r
+    val stateRegex = " [A-Z][A-Z] " r
+
+    def fix(s: String) =
+      spaceRegex.replaceAllIn(
+        entityRegex
+          .replaceAllIn(s, { m =>
+            m.group(1) match {
+              case null   => m.group(2).toInt.toChar.toString
+              case "nbsp" => " "
+              case "lt"   => "<"
+              case "rt"   => ">"
+              case "amp"  => "&"
+            }
+          })
+          .trim,
+        " "
+      )
+
+    val s = new Scanning(b)
+
+    @scala.annotation.tailrec
+    def leads(buf: StringBuilder = new StringBuilder): String = {
+      s.find("<hr />") match {
+        case None => buf.toString
+        case Some(p) =>
+          s.tab(p + 6)
+
+          val name = fix(s.tab(s.find("<br />").get).get)
+
+          s.move(6)
+
+          val addr1 = fix(s.tab(s.find("<br />").get).get)
+
+          s.move(6)
+
+          val addr2 = fix(s.tab(s.find("<br />").get).get)
+          val state = stateRegex.findFirstMatchIn(addr2).map(_.group(0).trim).getOrElse("")
+
+          s.move(6)
+
+          val phone = fix(s.tab(s.find("ID").get).get)
+
+          s.move(2)
+          buf ++= s""""$name", "$addr1, $addr2", $state, "$phone""""
+          buf += '\n'
+          leads(buf)
+      }
+    }
+
+    leads() match {
+      case "" => system.log.info(s"No leads found in $page")
+      case csv =>
+        val leadpath = path.getParent.resolve(s"${path.getFileName.toString}.csv")
+
+        system.log.info(s"Writing leads to path $leadpath")
+
+        Files.createDirectories(leadpath.getParent)
+        Files.writeString(leadpath, csv)
+    }
+  }
 
   implicit val system: ActorSystem = ActorSystem("spider")
 
@@ -44,8 +112,9 @@ object Main extends App {
   var task: TimerTask = _
   val headers =
     List(
-      RawHeader("user-agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0")
+      "user-agent" -> "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0"
     )
+  val rawheaders = headers map { case (k, v) => RawHeader(k, v) }
 
   submit(site, null)
 
@@ -87,7 +156,7 @@ object Main extends App {
     val u = Uri(url).withoutFragment
 
     linkActions(root(u).toString) match {
-      case None => system.log.warning(s"no actions found for link $url")
+      case None => system.log.info(s"No actions found for link $url")
       case Some(a) =>
         if (!u.isEmpty && u.isRelative)
           if (page eq null)
@@ -101,8 +170,8 @@ object Main extends App {
     }
   }
 
-  def process(page: Uri, actions: Seq[Action], body: String): Unit = {
-    for (l <- hrefRegex.findAllMatchIn(body).map(_.group(1)))
+  def process(page: Uri, actions: Seq[Action], body: ByteString): Unit = {
+    for (l <- hrefRegex.findAllMatchIn(body.utf8String).map(_.group(1)))
       submit(l, page)
 
     actions foreach {
@@ -111,7 +180,8 @@ object Main extends App {
 
         system.log.info(s"Writing file to path $path")
         Files.createDirectories(path.getParent)
-        Files.writeString(path, body)
+        Files.write(path, body.toArray)
+      case ProcessAction(processor) => processor(page, body)
     }
   }
 
@@ -137,7 +207,7 @@ object Main extends App {
       kick()
       requested += u
       system.log.info(s"Requesting page $uri")
-      Http() singleRequest HttpRequest(uri = uri, headers = headers) map (r => (uri, action, r)) pipeTo response
+      Http() singleRequest HttpRequest(uri = uri, headers = rawheaders) map ((uri, action, _)) pipeTo response
     }
   }
 
@@ -148,7 +218,7 @@ object Main extends App {
     def receive: Receive = {
       case (uri: Uri, actions: Seq[_], HttpResponse(StatusCodes.OK, _, entity, _)) =>
         kick()
-        entity.dataBytes.runFold(ByteString(""))(_ ++ _).map(_.utf8String).onComplete {
+        entity.dataBytes.runFold(ByteString(""))(_ ++ _).onComplete {
           case Success(body) =>
             log.info(s"Got response, body: uri = $uri, length = ${body.length}")
             process(uri, actions.asInstanceOf[Seq[Action]], body)
