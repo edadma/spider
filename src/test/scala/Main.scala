@@ -57,7 +57,7 @@ object Main extends App {
     val s = new Scanning(b)
 
     @scala.annotation.tailrec
-    def leads(buf: StringBuilder = new StringBuilder): String = {
+    def extract(buf: StringBuilder = new StringBuilder): String = {
       s.find("<hr />") match {
         case None => buf.toString
         case Some(p) =>
@@ -81,11 +81,11 @@ object Main extends App {
           s.move(2)
           buf ++= s""""$name","$addr1, $addr2",$state,"$phone""""
           buf += '\n'
-          leads(buf)
+          extract(buf)
       }
     }
 
-    leads() match {
+    extract() match {
       case "" => system.log.info(s"No leads found in $page")
       case csv =>
         val leadpath = path.getParent.resolve(s"${path.getFileName.toString}.csv")
