@@ -19,15 +19,6 @@ import scala.concurrent.ExecutionContext.Implicits.global
 object Main extends App {
 
   val site = "http://www.autodealerdirectory.us/" // "http://asdf.com" //"https://postman-echo.com/get/"
-  val path = "sites"
-  val base = Path.of(path)
-
-  trait Action
-  object AcceptAction extends Action
-  object RejectAction extends Action
-  object StoreAction extends Action
-  case class ProcessAction(processor: (Uri, ByteString) => Unit) extends Action
-
   val actionsList =
     List(
       ("""[a-z]{2}_s_.*""".r, RejectAction),
@@ -35,6 +26,9 @@ object Main extends App {
 //      (null, StoreAction),
       (null, ProcessAction(leads))
     )
+
+  val path = "sites"
+  val base = Path.of(path)
 
   def leads(page: Uri, body: ByteString): Unit = {
     val path = filepath(root(page).path, base.resolve(page.authority.host.address))
@@ -210,6 +204,12 @@ object Main extends App {
       Http() singleRequest HttpRequest(uri = uri, headers = rawheaders) map ((uri, action, _)) pipeTo response
     }
   }
+
+  trait Action
+  object AcceptAction extends Action
+  object RejectAction extends Action
+  object StoreAction extends Action
+  case class ProcessAction(processor: (Uri, ByteString) => Unit) extends Action
 
   class ResponseActor extends Actor with ActorLogging {
 
